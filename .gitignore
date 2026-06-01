@@ -1,0 +1,10 @@
+*.pt
+*.pth
+*.png
+*.jpg
+*.JPG
+*.zip
+Result/
+__pycache__/
+*/ipconfig.sh
+/networks/ipconfig.sh

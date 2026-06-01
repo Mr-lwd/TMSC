@@ -1,0 +1,5 @@
+DINO_ARCH="dinov3_vitl16"
+DINO_WEIGHTS="./dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth"
+CLIP_NAME="ViT-L-14-336px"
+BRANCH="430"
+export SAVE_TRIPTYCH="1"

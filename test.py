@@ -43,7 +43,7 @@ def prepare_data(dataset_name, category, args, **kwargs):
 
     return test_loader
 
-def test(clip_model, result_path, epoch, selected_layers, precomputed_dir, dataset_name, use_background_mask, cls_logit_scale, patch_logit_scale):
+def test(clip_model, result_path, epoch, selected_layers, precomputed_dir, dataset_name, cls_logit_scale, patch_logit_scale):
     category_metrics = []
     print(
         f"--------------------------------------Testing epoch {epoch}--------------------------------------"
@@ -81,7 +81,6 @@ def test(clip_model, result_path, epoch, selected_layers, precomputed_dir, datas
                     forced_category=category,
                     dataset_name=dataset_name,
                     is_training=False,
-                    use_background_mask=use_background_mask,
                     cls_logit_scale=cls_logit_scale,
                     patch_logit_scale=patch_logit_scale,
                 )
@@ -226,11 +225,10 @@ if __name__ == "__main__":
     parser.add_argument("--epoch", type=int, default=5, help="epoch to test")
     parser.add_argument("--branch", type=str, default="430", help="branch")
     parser.add_argument("--train_dataset", type=str, default="mvtec", help="train dataset")
-    parser.add_argument("--use_background_mask", action="store_true", default=True, help="Enable 3-class supervision with normal/anomaly/background masks. Enabled by default.")
     parser.add_argument("--anomaly_dice_weight", type=float, default=1.0, help="Anomaly-region dice loss weight.")
     parser.add_argument("--focal_normal_weight", type=float, default=1.0, help="Focal loss weight for the normal class.")
     parser.add_argument("--focal_anomaly_weight", type=float, default=1.0, help="Focal loss weight for the anomaly class.")
-    parser.add_argument("--focal_background_weight", type=float, default=1.0, help="Compatibility weight for the background channel; background pixels are ignored by focal loss when --use_background_mask is enabled.")
+    parser.add_argument("--focal_background_weight", type=float, default=1.0, help="Focal loss weight for the background channel.")
     parser.add_argument("--cls_logit_scale", type=float, default=100.0, help="Temperature/logit scale for CLS image-level normal/anomaly similarity.")
     parser.add_argument("--patch_logit_scale", type=float, default=100.0, help="Temperature/logit scale for patch-level normal/anomaly/background similarity maps.")
     parser.add_argument("--tri_mask_calib_weight", type=float, default=0.2, help="Prototype alignment loss weight used when constructing checkpoint paths.")
@@ -311,7 +309,7 @@ if __name__ == "__main__":
         enable_cross_attention_mlp=enable_cross_attention_mlp,
     )
     branch=args.branch
-    mode_tag = "bgmask" if args.use_background_mask else "nobgmask"
+    mode_tag = "bgmask"
     feature_run_branch = f"{branch}_{mode_tag}_{layers_tag}"
     run_branch = f"{feature_run_branch}_{build_anomaly_dice_tag(args.anomaly_dice_weight)}"
     run_branch = f"{run_branch}_{build_prompt_mode_tag()}"
@@ -322,12 +320,11 @@ if __name__ == "__main__":
     focal_weight_tag = build_focal_weight_tag(
         args.focal_normal_weight,
         args.focal_anomaly_weight,
-        args.focal_background_weight if args.use_background_mask else None,
+        args.focal_background_weight,
     )
     if focal_weight_tag:
         run_branch = f"{run_branch}_{focal_weight_tag}"
-    if args.use_background_mask:
-        run_branch = f"{run_branch}_fgfocal"
+    run_branch = f"{run_branch}_fgfocal"
     tri_mask_calib_tag = build_tri_mask_calib_tag(args.tri_mask_calib_weight)
     if tri_mask_calib_tag:
         run_branch = f"{run_branch}_{tri_mask_calib_tag}"
@@ -371,4 +368,4 @@ if __name__ == "__main__":
     precomputed_dir = os.path.join(
         args.result_path, "features", args.dataset, dino_arch, clip_name, feature_run_branch
     )
-    test(clip_model, out_dir, i, selected_layers, precomputed_dir, args.dataset, args.use_background_mask, args.cls_logit_scale, args.patch_logit_scale)
+    test(clip_model, out_dir, i, selected_layers, precomputed_dir, args.dataset, args.cls_logit_scale, args.patch_logit_scale)

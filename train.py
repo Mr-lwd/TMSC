@@ -71,7 +71,7 @@ def prepare_data(dataset_name, category, args, **kwargs):
 
     return test_loader
 
-def train_epoch(optimizer, loss_focal, loss_dice, loss_trpa, epoch, seg_loss_list, global_anomaly_loss_list, trpa_loss_list, loss_list, clip_model, start_time, train_data, selected_layers, precomputed_dir, dataset_name, use_background_mask, anomaly_dice_weight, tri_mask_calib_weight, cls_logit_scale, patch_logit_scale):
+def train_epoch(optimizer, loss_focal, loss_dice, loss_trpa, epoch, seg_loss_list, global_anomaly_loss_list, trpa_loss_list, loss_list, clip_model, start_time, train_data, selected_layers, precomputed_dir, dataset_name, anomaly_dice_weight, tri_mask_calib_weight, cls_logit_scale, patch_logit_scale):
     loss_fn = torch.nn.CrossEntropyLoss()
     enable_trpa = tri_mask_calib_weight > 0
     for idx, image_info in enumerate(train_data):
@@ -85,24 +85,16 @@ def train_epoch(optimizer, loss_focal, loss_dice, loss_trpa, epoch, seg_loss_lis
                 layers=selected_layers,
                 precomputed_dir=precomputed_dir,
                 dataset_name=dataset_name,
-                use_background_mask=use_background_mask,
                 return_feature_bundle=enable_trpa,
                 cls_logit_scale=cls_logit_scale,
                 patch_logit_scale=patch_logit_scale,
             )
         )
         seg_loss_anomaly = loss_dice(anomaly_map_cross_modal[:, 1, :, :], mask[:, 1, :, :])
-        if use_background_mask:
-            # seg_loss_normal = loss_dice(anomaly_map_cross_modal[:, 0, :, :], mask[:, 0, :, :])
-            seg_loss_avg = anomaly_dice_weight * seg_loss_anomaly
-        else:
-            seg_loss_avg = anomaly_dice_weight * seg_loss_anomaly
+        seg_loss_avg = anomaly_dice_weight * seg_loss_anomaly
         
         mask_indices = torch.argmax(mask, dim=1).unsqueeze(1).float()
-        
-        focal_valid_mask = None
-        if use_background_mask:
-            focal_valid_mask = (mask[:, 0:1, :, :] + mask[:, 1:2, :, :]).clamp(0.0, 1.0)
+        focal_valid_mask = (mask[:, 0:1, :, :] + mask[:, 1:2, :, :]).clamp(0.0, 1.0)
 
         focal_loss_all = loss_focal(
             anomaly_map_cross_modal,
@@ -172,14 +164,13 @@ if __name__ == "__main__":
     parser.add_argument("--force_extraction", type=bool, default=False, help="Force extraction of features")
     parser.add_argument("--seed", type=int, default=1, help="seed")
     parser.add_argument("--branch", type=str, default="430", help="branch")
-    parser.add_argument("--use_background_mask", action="store_true", default=True, help="Enable 3-class supervision with normal/anomaly/background masks. Enabled by default.")
     parser.add_argument("--anomaly_dice_weight", type=float, default=1.0, help="Anomaly-region dice loss weight.")
     parser.add_argument("--focal_normal_weight", type=float, default=1.0, help="Focal loss weight for the normal class.")
     parser.add_argument("--focal_anomaly_weight", type=float, default=1.0, help="Focal loss weight for the anomaly class.")
-    parser.add_argument("--focal_background_weight", type=float, default=1.0, help="Compatibility weight for the background channel; background pixels are ignored by focal loss when --use_background_mask is enabled.")
+    parser.add_argument("--focal_background_weight", type=float, default=1.0, help="Focal loss weight for the background channel.")
     parser.add_argument("--cls_logit_scale", type=float, default=100.0, help="Temperature/logit scale for CLS image-level normal/anomaly similarity.")
     parser.add_argument("--patch_logit_scale", type=float, default=100.0, help="Temperature/logit scale for patch-level normal/anomaly/background similarity maps.")
-    parser.add_argument("--tri_mask_calib_weight", type=float, default=0.2, help="Prototype alignment loss weight. Uses normal/anomaly regions without --use_background_mask and normal/anomaly/background regions with it.")
+    parser.add_argument("--tri_mask_calib_weight", type=float, default=0.2, help="Prototype alignment loss weight for normal/anomaly/background regions.")
     args = parser.parse_args()
     setup_seed(args.seed)
     selected_layers = [int(x.strip()) for x in args.selected_layers.split(",") if x.strip()]
@@ -190,7 +181,7 @@ if __name__ == "__main__":
     enable_cross_attention = True
     enable_cross_attention_mlp = True
     branch=args.branch
-    mode_tag = "bgmask" if args.use_background_mask else "nobgmask"
+    mode_tag = "bgmask"
     feature_run_branch = f"{branch}_{mode_tag}_{layers_tag}"
     run_branch = f"{feature_run_branch}_{build_anomaly_dice_tag(args.anomaly_dice_weight)}"
     run_branch = f"{run_branch}_{build_prompt_mode_tag()}"
@@ -201,12 +192,11 @@ if __name__ == "__main__":
     focal_weight_tag = build_focal_weight_tag(
         args.focal_normal_weight,
         args.focal_anomaly_weight,
-        args.focal_background_weight if args.use_background_mask else None,
+        args.focal_background_weight,
     )
     if focal_weight_tag:
         run_branch = f"{run_branch}_{focal_weight_tag}"
-    if args.use_background_mask:
-        run_branch = f"{run_branch}_fgfocal"
+    run_branch = f"{run_branch}_fgfocal"
     tri_mask_calib_tag = build_tri_mask_calib_tag(args.tri_mask_calib_weight)
     if tri_mask_calib_tag:
         run_branch = f"{run_branch}_{tri_mask_calib_tag}"
@@ -214,9 +204,11 @@ if __name__ == "__main__":
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     os.makedirs(f"{args.result_path}", exist_ok=True)
 
-    focal_class_weights = [args.focal_normal_weight, args.focal_anomaly_weight]
-    if args.use_background_mask:
-        focal_class_weights.append(args.focal_background_weight)
+    focal_class_weights = [
+        args.focal_normal_weight,
+        args.focal_anomaly_weight,
+        args.focal_background_weight,
+    ]
     if any(weight <= 0 for weight in focal_class_weights):
         raise ValueError("Focal class weights must be positive.")
     if args.cls_logit_scale <= 0 or args.patch_logit_scale <= 0:
@@ -313,7 +305,7 @@ if __name__ == "__main__":
             [],
         )
 
-        train_epoch(optimizer, loss_focal, loss_dice, loss_trpa, epoch, seg_loss_list, global_anomaly_loss_list, trpa_loss_list, loss_list, clip_model, start_time, train_data, selected_layers, precomputed_dir, args.dataset, args.use_background_mask, args.anomaly_dice_weight, args.tri_mask_calib_weight, args.cls_logit_scale, args.patch_logit_scale)
+        train_epoch(optimizer, loss_focal, loss_dice, loss_trpa, epoch, seg_loss_list, global_anomaly_loss_list, trpa_loss_list, loss_list, clip_model, start_time, train_data, selected_layers, precomputed_dir, args.dataset, args.anomaly_dice_weight, args.tri_mask_calib_weight, args.cls_logit_scale, args.patch_logit_scale)
         print()
         # scheduler.step()
 

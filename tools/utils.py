@@ -126,21 +126,16 @@ def _slice_image_info(image_info, indices):
     return subset
 
 
-def prepare_multiclass_mask(image_info, device, forced_category=None, dataset_name=None, is_training=True, use_background_mask=False):
+def prepare_multiclass_mask(image_info, device, forced_category=None, dataset_name=None, is_training=True):
     image_path = image_info["image_path"]
     mask = (image_info["mask"].to(device) > 0.5).float()
 
     B, _, H, W = mask.shape
-    num_mask_channels = 3 if use_background_mask else 2
-    new_mask = torch.zeros((B, num_mask_channels, H, W), device=device)
+    new_mask = torch.zeros((B, 3, H, W), device=device)
 
     for i in range(len(image_path)):
         current_anomaly_mask = mask[i, 0].float()
         new_mask[i, 1] = current_anomaly_mask
-
-        if not use_background_mask:
-            new_mask[i, 0] = 1.0 - current_anomaly_mask
-            continue
 
         if not is_training:
             continue
@@ -299,7 +294,7 @@ def compute_masked_patch_consistency_loss(source_feature_bundle, target_feature_
         return anomaly_mask.new_zeros(())
     return total_loss / valid_layers
 
-def get_anomaly_map(clip_model, image_info, device, model, Dino_model, layers=None, precomputed_dir=None, forced_category=None, dataset_name=None, is_training=True, use_background_mask=False, return_feature_bundle=False, image_override=None, prepared_mask=None, visual_cache_subdir='train', cls_logit_scale=100.0, patch_logit_scale=100.0):
+def get_anomaly_map(clip_model, image_info, device, model, Dino_model, layers=None, precomputed_dir=None, forced_category=None, dataset_name=None, is_training=True, return_feature_bundle=False, image_override=None, prepared_mask=None, visual_cache_subdir='train', cls_logit_scale=100.0, patch_logit_scale=100.0):
     image = image_override.to(device) if image_override is not None else image_info["image"].to(device)
     image_path = image_info["image_path"]
     if prepared_mask is None:
@@ -309,7 +304,6 @@ def get_anomaly_map(clip_model, image_info, device, model, Dino_model, layers=No
             forced_category=forced_category,
             dataset_name=dataset_name,
             is_training=is_training,
-            use_background_mask=use_background_mask,
         )
     else:
         mask = prepared_mask.to(device)
@@ -348,15 +342,13 @@ def get_anomaly_map(clip_model, image_info, device, model, Dino_model, layers=No
         patch_prompt_features = [
             model.adapt_text_patch(text_feature[i, :, 0]),
             model.adapt_text_patch(text_feature[i, :, 1]),
+            model.adapt_text_patch(text_feature[i, :, 2]),
         ]
-        if use_background_mask:
-            patch_prompt_features.append(model.adapt_text_patch(text_feature[i, :, 2]))
         cls_prompt_features = [
             model.adapt_text_cls(text_feature[i, :, 0]),
             model.adapt_text_cls(text_feature[i, :, 1]),
+            model.adapt_text_cls(text_feature[i, :, 2]),
         ]
-        if use_background_mask:
-            cls_prompt_features.append(model.adapt_text_cls(text_feature[i, :, 2]))
         adjusted_feats_map.append(torch.stack(patch_prompt_features, dim=1))
         adjusted_feats_cls.append(torch.stack(cls_prompt_features, dim=1))
     
@@ -369,7 +361,7 @@ def get_anomaly_map(clip_model, image_info, device, model, Dino_model, layers=No
             tf_sample = adjusted_text_feature_map[0].clone().detach()
             tf_sample = tf_sample / tf_sample.norm(dim=0, keepdim=True)
             sim_matrix = tf_sample.T @ tf_sample
-            channel_names = ["Normal", "Anomaly"] + (["Background"] if use_background_mask else [])
+            channel_names = ["Normal", "Anomaly", "Background"]
             print(f"\nText Feature Similarity Matrix (Map Adapter) ({', '.join(channel_names)}):")
             print(sim_matrix.cpu().numpy())
         _SIM_MATRIX_PRINTED = True
@@ -534,7 +526,7 @@ def save_backbone_features_for_dataset(data_loader, device, Dino_model, clip_mod
     )
 
 
-def save_backbone_features_for_dataset_variant(data_loader, device, Dino_model, clip_model, layers, cache_dir, text_device=None, forced_category=None, force_extraction=False, visual_cache_subdir='train', guided_blend_alpha=0.2, guided_blur_kernel=15, use_guided_background_view=False, dataset_name=None, use_background_mask=False):
+def save_backbone_features_for_dataset_variant(data_loader, device, Dino_model, clip_model, layers, cache_dir, text_device=None, forced_category=None, force_extraction=False, visual_cache_subdir='train', guided_blend_alpha=0.2, guided_blur_kernel=15, use_guided_background_view=False, dataset_name=None):
     text_dir = os.path.join(cache_dir, 'text')
     visual_dir = os.path.join(cache_dir, visual_cache_subdir)
     os.makedirs(text_dir, exist_ok=True)
@@ -542,8 +534,8 @@ def save_backbone_features_for_dataset_variant(data_loader, device, Dino_model, 
     saved_cats = set()
     if text_device is None:
         text_device = device
-    if use_guided_background_view and (dataset_name is None or not use_background_mask):
-        raise ValueError("guided background pre-extraction requires dataset_name and use_background_mask=True")
+    if use_guided_background_view and dataset_name is None:
+        raise ValueError("guided background pre-extraction requires dataset_name")
     with torch.inference_mode():
         for image_info in data_loader:
             image_path = image_info['image_path']
@@ -573,7 +565,6 @@ def save_backbone_features_for_dataset_variant(data_loader, device, Dino_model, 
                         forced_category=forced_category,
                         dataset_name=dataset_name,
                         is_training=True,
-                        use_background_mask=use_background_mask,
                     )
                     image = build_guided_background_view(
                         image,

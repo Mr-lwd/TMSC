@@ -54,7 +54,7 @@ Supported dataset keys:
 
 ### 3. Foreground and Background Masks
 
-Background-mask supervision is enabled by default in `train.py` and `test.py`. The loader in `tools/utils.py` currently expects foreground and background masks at the following hard-coded location:
+Background-mask supervision is always enabled. The loader in `tools/utils.py` currently expects foreground and background masks at the following hard-coded location:
 
 ```text
 /root/autodl-tmp/ADDINOv3_lwd/visualizations_normal_masks/
@@ -121,7 +121,6 @@ python train.py \
   --selected_layers 14,17,20,23 \
   --seed 1 \
   --branch 430 \
-  --use_background_mask \
   --tri_mask_calib_weight 0.2
 ```
 
@@ -146,7 +145,6 @@ python test.py \
   --selected_layers 14,17,20,23 \
   --epoch 5 \
   --seed 4 \
-  --use_background_mask \
   --tri_mask_calib_weight 0.2
 ```
 
